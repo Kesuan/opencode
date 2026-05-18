@@ -71,6 +71,18 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       )
     })
 
+    const commitVcs = Effect.fn("InstanceHttpApi.vcsCommit")(function* (ctx: { payload: { message: string } }) {
+      return yield* vcs.commit(ctx.payload.message)
+    })
+
+    const updateVcs = Effect.fn("InstanceHttpApi.vcsUpdate")(function* (ctx: { payload: { revision?: string } }) {
+      return yield* vcs.update(ctx.payload.revision)
+    })
+
+    const getVcsLog = Effect.fn("InstanceHttpApi.vcsLog")(function* (ctx: { query: { limit?: number } }) {
+      return yield* vcs.log(ctx.query.limit)
+    })
+
     const getCommand = Effect.fn("InstanceHttpApi.command")(function* () {
       return yield* command.list()
     })
@@ -99,6 +111,9 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       .handle("vcsDiff", getVcsDiff)
       .handle("vcsDiffRaw", getVcsDiffRaw)
       .handle("vcsApply", applyVcs)
+      .handle("vcsCommit", commitVcs)
+      .handle("vcsUpdate", updateVcs)
+      .handle("vcsLog", getVcsLog)
       .handle("command", getCommand)
       .handle("agent", getAgent)
       .handle("skill", getSkill)

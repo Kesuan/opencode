@@ -5,6 +5,7 @@ import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect/instance-state"
 import { FileWatcher } from "@/file/watcher"
 import { Git } from "@/git"
+import { Svn } from "@/svn"
 import * as Log from "@opencode-ai/core/util/log"
 
 const log = Log.create({ service: "vcs" })
@@ -206,7 +207,7 @@ const track = Effect.fnUntraced(function* (git: Git.Interface, cwd: string, ref:
   return yield* diffAgainstRef(git, cwd, ref)
 })
 
-export const Mode = Schema.Literals(["git", "branch"])
+export const Mode = Schema.Literals(["git", "branch", "svn"])
 export type Mode = Schema.Schema.Type<typeof Mode>
 
 export const Event = {
@@ -267,6 +268,9 @@ export interface Interface {
   readonly diff: (mode: Mode) => Effect.Effect<FileDiff[]>
   readonly diffRaw: () => Effect.Effect<string>
   readonly apply: (input: ApplyInput) => Effect.Effect<ApplyResult, PatchApplyError>
+  readonly commit: (message: string) => Effect.Effect<{ revision: number; message: string }>
+  readonly update: (revision?: string) => Effect.Effect<{ revision: number; updated: string[] }>
+  readonly log: (limit?: number) => Effect.Effect<Array<{ revision: number; author?: string; date?: string; message?: string }>>
 }
 
 interface State {
@@ -276,10 +280,11 @@ interface State {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Vcs") {}
 
-export const layer: Layer.Layer<Service, never, Git.Service | Bus.Service> = Layer.effect(
+export const layer: Layer.Layer<Service, never, Git.Service | Svn.Service | Bus.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const git = yield* Git.Service
+    const svn = yield* Svn.Service
     const bus = yield* Bus.Service
     const scope = yield* Scope.Scope
 
@@ -396,10 +401,61 @@ export const layer: Layer.Layer<Service, never, Git.Service | Bus.Service> = Lay
         }
         return { applied: true }
       }),
+      commit: Effect.fn("Vcs.commit")(function* (message: string) {
+        const ctx = yield* InstanceState.context
+        if (ctx.project.vcs === "svn") {
+          const result = yield* svn.commit(ctx.directory, message)
+          if (result.exitCode !== 0) {
+            throw new Error(result.text())
+          }
+          const match = /Committed revision (\d+)/.exec(result.text())
+          const revision = match ? parseInt(match[1], 10) : 0
+          return { revision, message }
+        }
+        throw new Error("Commit is only supported for SVN")
+      }),
+      update: Effect.fn("Vcs.update")(function* (revision?: string) {
+        const ctx = yield* InstanceState.context
+        if (ctx.project.vcs === "svn") {
+          const result = yield* svn.update(ctx.directory, revision)
+          if (result.exitCode !== 0) {
+            throw new Error(result.text())
+          }
+          const updated: string[] = []
+          const lines = result.text().split("\n")
+          for (const line of lines) {
+            const match = /^(A|U|G|C|I|R|E)\s+(.+)$/.exec(line)
+            if (match) {
+              updated.push(match[2])
+            }
+          }
+          const revMatch = /Updated to revision (\d+)/.exec(result.text())
+          const rev = revMatch ? parseInt(revMatch[1], 10) : 0
+          return { revision: rev, updated }
+        }
+        throw new Error("Update is only supported for SVN")
+      }),
+      log: Effect.fn("Vcs.log")(function* (limit?: number) {
+        const ctx = yield* InstanceState.context
+        if (ctx.project.vcs === "svn") {
+          const entries = yield* svn.log(ctx.directory, limit)
+          return entries.map((entry) => ({
+            revision: parseInt(entry.revision, 10),
+            author: entry.author,
+            date: entry.date,
+            message: entry.message,
+          }))
+        }
+        return []
+      }),
     })
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Git.defaultLayer), Layer.provide(Bus.layer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(Git.defaultLayer),
+  Layer.provide(Svn.defaultLayer),
+  Layer.provide(Bus.layer),
+)
 
 export * as Vcs from "./vcs"

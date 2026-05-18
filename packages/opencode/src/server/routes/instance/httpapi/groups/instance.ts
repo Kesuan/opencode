@@ -47,6 +47,9 @@ export const InstancePaths = {
   vcsDiff: "/vcs/diff",
   vcsDiffRaw: "/vcs/diff/raw",
   vcsApply: "/vcs/apply",
+  vcsCommit: "/vcs/commit",
+  vcsUpdate: "/vcs/update",
+  vcsLog: "/vcs/log",
   command: "/command",
   agent: "/agent",
   skill: "/skill",
@@ -133,6 +136,67 @@ export const InstanceApi = HttpApi.make("instance")
             identifier: "vcs.apply",
             summary: "Apply VCS patch",
             description: "Apply a raw patch to the current working tree.",
+          }),
+        ),
+        HttpApiEndpoint.post("vcsCommit", InstancePaths.vcsCommit, {
+          query: WorkspaceRoutingQuery,
+          payload: Schema.Struct({
+            message: Schema.String,
+          }),
+          success: described(
+            Schema.Struct({
+              revision: Schema.Number,
+              message: Schema.String,
+            }),
+            "SVN commit result",
+          ),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "vcs.commit",
+            summary: "Commit VCS changes",
+            description: "Commit changes to SVN repository.",
+          }),
+        ),
+        HttpApiEndpoint.post("vcsUpdate", InstancePaths.vcsUpdate, {
+          query: WorkspaceRoutingQuery,
+          payload: Schema.Struct({
+            revision: Schema.optional(Schema.String),
+          }),
+          success: described(
+            Schema.Struct({
+              revision: Schema.Number,
+              updated: Schema.Array(Schema.String),
+            }),
+            "SVN update result",
+          ),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "vcs.update",
+            summary: "Update VCS working copy",
+            description: "Update SVN working copy to a specific revision.",
+          }),
+        ),
+        HttpApiEndpoint.get("vcsLog", InstancePaths.vcsLog, {
+          query: Schema.Struct({
+            ...WorkspaceRoutingQueryFields,
+            limit: Schema.optional(Schema.Number),
+          }),
+          success: described(
+            Schema.Array(
+              Schema.Struct({
+                revision: Schema.Number,
+                author: Schema.optional(Schema.String),
+                date: Schema.optional(Schema.String),
+                message: Schema.optional(Schema.String),
+              }),
+            ),
+            "SVN log entries",
+          ),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "vcs.log",
+            summary: "Get VCS log",
+            description: "Retrieve commit history from SVN.",
           }),
         ),
         HttpApiEndpoint.get("command", InstancePaths.command, {

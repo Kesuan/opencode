@@ -23,7 +23,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 
 const log = Log.create({ service: "project" })
 
-const ProjectVcs = Schema.Literal("git")
+const ProjectVcs = Schema.Literal("git", "svn")
 
 const ProjectIcon = Schema.Struct({
   url: optionalOmitUndefined(Schema.String),
@@ -118,6 +118,7 @@ export interface Interface {
   readonly get: (id: ProjectID) => Effect.Effect<Info | undefined>
   readonly update: (input: UpdateInput) => Effect.Effect<Info>
   readonly initGit: (input: { directory: string; project: Info }) => Effect.Effect<Info>
+  readonly initSvn: (input: { directory: string; project: Info }) => Effect.Effect<Info>
   readonly setInitialized: (id: ProjectID) => Effect.Effect<void>
   readonly sandboxes: (id: ProjectID) => Effect.Effect<string[]>
   readonly addSandbox: (id: ProjectID, directory: string) => Effect.Effect<void>
@@ -145,6 +146,22 @@ export const layer: Layer.Layer<
       function* (args: string[], opts?: { cwd?: string }) {
         const handle = yield* spawner.spawn(
           ChildProcess.make("git", args, { cwd: opts?.cwd, extendEnv: true, stdin: "ignore" }),
+        )
+        const [text, stderr] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
+          { concurrency: 2 },
+        )
+        const code = yield* handle.exitCode
+        return { code, text, stderr } satisfies GitResult
+      },
+      Effect.scoped,
+      Effect.catch(() => Effect.succeed({ code: 1, text: "", stderr: "" } satisfies GitResult)),
+    )
+
+    const svn = Effect.fnUntraced(
+      function* (args: string[], opts?: { cwd?: string }) {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("svn", args, { cwd: opts?.cwd, extendEnv: true, stdin: "ignore" }),
         )
         const [text, stderr] = yield* Effect.all(
           [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
@@ -198,7 +215,18 @@ export const layer: Layer.Layer<
 
       const data: DiscoveryResult = yield* Effect.gen(function* () {
         const dotgitMatches = yield* fs.up({ targets: [".git"], start: directory }).pipe(Effect.orDie)
+        const dotsvnMatches = yield* fs.up({ targets: [".svn"], start: directory }).pipe(Effect.orDie)
         const dotgit = dotgitMatches[0]
+        const dotsvn = dotsvnMatches[0]
+
+        if (dotsvn && !dotgit) {
+          return {
+            id: ProjectID.global,
+            worktree: pathSvc.dirname(dotsvn),
+            sandbox: pathSvc.dirname(dotsvn),
+            vcs: "svn" as const,
+          }
+        }
 
         if (!dotgit) {
           return {
@@ -417,6 +445,17 @@ export const layer: Layer.Layer<
       return project
     })
 
+    const initSvn = Effect.fn("Project.initSvn")(function* (input: { directory: string; project: Info }) {
+      if (input.project.vcs === "svn") return input.project
+      if (!(yield* Effect.sync(() => which("svn")))) throw new Error("SVN is not installed")
+      const result = yield* svn(["checkout", input.directory], { cwd: input.directory })
+      if (result.code !== 0) {
+        throw new Error(result.stderr.trim() || "Failed to initialize SVN working copy")
+      }
+      const { project } = yield* fromDirectory(input.directory)
+      return project
+    })
+
     const setInitialized = Effect.fn("Project.setInitialized")(function* (id: ProjectID) {
       yield* db((d) =>
         d.update(ProjectTable).set({ time_initialized: Date.now() }).where(eq(ProjectTable.id, id)).run(),
@@ -494,6 +533,7 @@ export const layer: Layer.Layer<
       get,
       update,
       initGit,
+      initSvn,
       setInitialized,
       sandboxes,
       addSandbox,

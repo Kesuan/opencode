@@ -16,6 +16,7 @@ export type WorkspaceFileChangesChoice = (typeof options)[number]
 function statusLabel(status: VcsFileStatus["status"]) {
   if (status === "added") return "A"
   if (status === "deleted") return "D"
+  if (status === "modified") return "M"
   return "M"
 }
 

@@ -2,7 +2,7 @@ import { Cause, Effect, Layer, Context, Schema } from "effect"
 // @ts-ignore
 import { createWrapper } from "@parcel/watcher/wrapper"
 import type ParcelWatcher from "@parcel/watcher"
-import { readdir, realpath } from "fs/promises"
+import { readdir, realpath, access } from "fs/promises"
 import path from "path"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
@@ -10,6 +10,7 @@ import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Git } from "@/git"
+import { Svn } from "@/svn"
 import { lazy } from "@/util/lazy"
 import { Config } from "@/config/config"
 import { FileIgnore } from "./ignore"
@@ -146,6 +147,16 @@ export const layer = Layer.effect(
               yield* Effect.forkScoped(subscribe(vcsDir, ignore))
             }
           }
+
+          if (ctx.project.vcs === "svn") {
+            const svnDir = path.join(ctx.worktree, ".svn")
+            if (yield* Effect.promise(() => access(svnDir).then(() => true).catch(() => false))) {
+              const ignore = (yield* Effect.promise(() => readdir(svnDir).catch(() => []))).filter(
+                (entry) => entry !== "wc.db" && entry !== "tmp" && entry !== "pristine",
+              )
+              yield* Effect.forkScoped(subscribe(svnDir, ignore))
+            }
+          }
         },
         Effect.catchCause((cause) => {
           log.error("failed to init watcher service", { cause: Cause.pretty(cause) })
@@ -162,6 +173,10 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Config.defaultLayer), Layer.provide(Git.defaultLayer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(Config.defaultLayer),
+  Layer.provide(Git.defaultLayer),
+  Layer.provide(Svn.defaultLayer),
+)
 
 export * as FileWatcher from "./watcher"

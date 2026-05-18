@@ -339,7 +339,7 @@ export type EventTuiSessionSelect = {
 export type Project = {
   id: string
   worktree: string
-  vcs?: "git"
+  vcs?: "git" | "svn"
   name?: string
   icon?: {
     url?: string
